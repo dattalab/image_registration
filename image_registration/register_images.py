@@ -7,7 +7,7 @@ except ImportError:
 import warnings
 import numpy as np
 
-__all__ = ['register_images']
+__all__ = ['register_images', 'register_stack', 'dftregistration']
 
 def register_images(im1, im2, usfac=1, return_registered=False,
         return_error=False, zeromean=True, DEBUG=False, maxoff=None,
@@ -76,6 +76,77 @@ def register_images(im1, im2, usfac=1, return_registered=False,
 
     return output
 
+def register_stack(stack, target=None, usfac=1, return_registered=False,
+        return_error=False, zeromean=True, DEBUG=False, maxoff=None,
+        nthreads=1, use_numpy_fft=False):
+    """
+    Sub-pixel image registration (see dftregistration for lots of details)
+
+    Parameters
+    ----------
+    stack : np.ndarray, 3d.  x by y by frames
+    target : np.ndarray.  If none, use the first image from the stack
+        The images to register. 
+    usfac : int
+        upsampling factor; governs accuracy of fit (1/usfac is best accuracy)
+    return_registered : bool
+        Return the registered image as the last parameter
+    return_error : bool
+        Does nothing at the moment, but in principle should return the "fit
+        error" (it does nothing because I don't know how to compute the "fit
+        error")
+    zeromean : bool
+        Subtract the mean from the images before cross-correlating?  If no, you
+        may get a 0,0 offset because the DC levels are strongly correlated.
+    maxoff : int
+        Maximum allowed offset to measure (setting this helps avoid spurious
+        peaks)
+    DEBUG : bool
+        Test code used during development.  Should DEFINITELY be removed.
+
+    Returns
+    -------
+    dx,dy : float,float
+        REVERSE of dftregistration order (also, signs flipped) for consistency
+        with other routines.
+        Measures the amount im2 is offset from im1 (i.e., shift im2 by these #'s
+        to match im1)
+
+    """
+    if target is None:
+        target = stack[:,:,0]
+
+    # prepare the target array
+
+    if zeromean:
+        target -= target.mean()
+    target[np.isnan(target)] = 0
+
+    fft2,ifft2 = fftn,ifftn = fast_ffts.get_ffts(nthreads=nthreads, use_numpy_fft=use_numpy_fft)
+
+    targetfft = fft2(target)
+    stackfft = np.empty_like(stack, dtype='complex128')
+    for i in range(stack.shape[2]):
+        stackfft[:,:,i] = fft2(stack[:,:,i])
+    
+    # loop over stack, aligning
+    outputs = []
+    for i in range(stack.shape[2]):
+        output = dftregistration(im1fft,im2fft,usfac=usfac,
+                                 return_registered=return_registered, return_error=return_error,
+                                 zeromean=zeromean, DEBUG=DEBUG, maxoff=maxoff)
+        outputs.appen(output)
+
+
+    # uh not that clear about this reordering of the outputs?
+
+    for i, output in enumerate(outputs):
+        outputs[i] = [-output[1], -output[0], ] + [o for o in output[2:]]
+
+    if return_registered:
+        output[-1] = np.abs(np.fft.ifftshift(ifft2(output[-1])))
+
+    return output
 
 def dftregistration(buf1ft,buf2ft,usfac=1, return_registered=False,
         return_error=False, zeromean=True, DEBUG=False, maxoff=None,
