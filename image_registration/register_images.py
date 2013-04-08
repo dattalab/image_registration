@@ -7,7 +7,7 @@ except ImportError:
 import warnings
 import numpy as np
 
-__all__ = ['register_images']
+__all__ = ['register_images', 'register_series', 'dftregistration']
 
 def register_images(im1, im2, usfac=1, return_registered=False,
         return_error=False, zeromean=True, DEBUG=False, maxoff=None,
@@ -76,6 +76,85 @@ def register_images(im1, im2, usfac=1, return_registered=False,
 
     return output
 
+def register_series(series, target=None, usfac=1, return_registered=False,
+        return_error=False, zeromean=True, DEBUG=False, maxoff=None,
+        nthreads=1, use_numpy_fft=False):
+    """
+    Sub-pixel image registration of a series of images (see dftregistration
+    for lots of details)
+
+    Parameters
+    ----------
+    series : np.ndarray, 3d, x by y by frames
+    target : np.ndarray.  If none, use the first image from the series
+    usfac : int
+        upsampling factor; governs accuracy of fit (1/usfac is best accuracy)
+    return_registered : bool
+        Return the registered image as the last parameter
+    return_error : bool
+        Does nothing at the moment, but in principle should return the "fit
+        error" (it does nothing because I don't know how to compute the "fit
+        error")
+    zeromean : bool
+        Subtract the mean from the images before cross-correlating?  If no, you
+        may get a 0,0 offset because the DC levels are strongly correlated.
+    maxoff : int
+        Maximum allowed offset to measure (setting this helps avoid spurious
+        peaks)
+    DEBUG : bool
+        Test code used during development.  Should DEFINITELY be removed.
+
+    Returns
+    -------
+    dx,dy : float,float
+        REVERSE of dftregistration order (also, signs flipped) for consistency
+        with other routines.
+        Measures the amount im2 is offset from im1 (i.e., shift im2 by these #'s
+        to match im1)
+
+    """
+    if target is None:
+        target = series[:,:,0]
+
+    # prepare the target array
+    if zeromean:
+        target -= target.mean()
+    target[np.isnan(target)] = 0
+
+    # import the fft functions
+    fft2,ifft2 = fftn,ifftn = fast_ffts.get_ffts(nthreads=nthreads, use_numpy_fft=use_numpy_fft)
+
+    # let's pre-transform everything
+    targetfft = fft2(target)
+    seriesfft = np.empty_like(series, dtype='complex128')
+    for i in range(series.shape[2]):
+        seriesfft[:,:,i] = fft2(series[:,:,i])
+    
+    # loop over series, aligning
+    outputs = []
+    for i in range(series.shape[2]):
+        output = dftregistration(targetfft,seriesfft[:,:,i],usfac=usfac,
+                                 return_registered=return_registered, return_error=return_error,
+                                 zeromean=zeromean, DEBUG=DEBUG, maxoff=maxoff)
+        outputs.append(output)
+
+    # uh not that clear about this reordering of the outputs, but i do it for all outputs.
+    for i, output in enumerate(outputs):
+        outputs[i] = [-output[1], -output[0], ] + [o for o in output[2:]]
+        if return_registered:
+            outputs[i][-1] = np.abs(ifft2(output[-1]))
+
+    # let's re-arrange the output into a tuple of 3:
+    # the new series, the x shifts and the y shifts
+
+    newseries = np.empty_like(series)
+    for i, output in enumerate(outputs):
+        newseries[:,:,i] = output[-1]
+
+    x_shifts = np.array([o[0] for o in outputs])
+    y_shifts = np.array([o[1] for o in outputs])
+
+    return newseries, x_shifts, y_shifts
 
 def dftregistration(buf1ft,buf2ft,usfac=1, return_registered=False,
         return_error=False, zeromean=True, DEBUG=False, maxoff=None,
@@ -317,7 +396,7 @@ def dftregistration(buf1ft,buf2ft,usfac=1, return_registered=False,
             Nr = np.fft.ifftshift(np.linspace(-np.fix(nr/2),np.ceil(nr/2)-1,nr))
             Nc = np.fft.ifftshift(np.linspace(-np.fix(nc/2),np.ceil(nc/2)-1,nc))
             [Nc,Nr] = np.meshgrid(Nc,Nr);
-            Greg = buf2ft * np.exp(1j*2*pi*(-row_shift*Nr/nr-col_shift*Nc/nc));
+            Greg = buf2ft * np.exp(1j*2*np.pi*(-row_shift*Nr/nr-col_shift*Nc/nc));
             Greg = Greg*np.exp(1j*diffphase);
         elif (usfac == 0):
             Greg = buf2ft*np.exp(1j*diffphase);
