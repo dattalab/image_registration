@@ -7,7 +7,7 @@ except ImportError:
 import warnings
 import numpy as np
 
-__all__ = ['register_images', 'register_stack', 'dftregistration']
+__all__ = ['register_images', 'register_series', 'dftregistration']
 
 def register_images(im1, im2, usfac=1, return_registered=False,
         return_error=False, zeromean=True, DEBUG=False, maxoff=None,
@@ -76,17 +76,17 @@ def register_images(im1, im2, usfac=1, return_registered=False,
 
     return output
 
-def register_stack(stack, target=None, usfac=1, return_registered=False,
+def register_series(series, target=None, usfac=1, return_registered=False,
         return_error=False, zeromean=True, DEBUG=False, maxoff=None,
         nthreads=1, use_numpy_fft=False):
     """
-    Sub-pixel image registration of a stack of images (see dftregistration
+    Sub-pixel image registration of a series of images (see dftregistration
     for lots of details)
 
     Parameters
     ----------
-    stack : np.ndarray, 3d, x by y by frames
-    target : np.ndarray.  If none, use the first image from the stack
+    series : np.ndarray, 3d, x by y by frames
+    target : np.ndarray.  If none, use the first image from the series
     usfac : int
         upsampling factor; governs accuracy of fit (1/usfac is best accuracy)
     return_registered : bool
@@ -114,7 +114,7 @@ def register_stack(stack, target=None, usfac=1, return_registered=False,
 
     """
     if target is None:
-        target = stack[:,:,0]
+        target = series[:,:,0]
 
     # prepare the target array
     if zeromean:
@@ -126,25 +126,35 @@ def register_stack(stack, target=None, usfac=1, return_registered=False,
 
     # let's pre-transform everything
     targetfft = fft2(target)
-    stackfft = np.empty_like(stack, dtype='complex128')
-    for i in range(stack.shape[2]):
-        stackfft[:,:,i] = fft2(stack[:,:,i])
+    seriesfft = np.empty_like(series, dtype='complex128')
+    for i in range(series.shape[2]):
+        seriesfft[:,:,i] = fft2(series[:,:,i])
     
-    # loop over stack, aligning
+    # loop over series, aligning
     outputs = []
-    for i in range(stack.shape[2]):
-        output = dftregistration(im1fft,im2fft,usfac=usfac,
+    for i in range(series.shape[2]):
+        output = dftregistration(targetfft,seriesfft[:,:,i],usfac=usfac,
                                  return_registered=return_registered, return_error=return_error,
                                  zeromean=zeromean, DEBUG=DEBUG, maxoff=maxoff)
-        outputs.appen(output)
+        outputs.append(output)
 
     # uh not that clear about this reordering of the outputs, but i do it for all outputs.
     for i, output in enumerate(outputs):
         outputs[i] = [-output[1], -output[0], ] + [o for o in output[2:]]
         if return_registered:
-            outputs[i][-1] = np.abs(np.fft.ifftshift(ifft2(output[-1])))
+            outputs[i][-1] = np.abs(ifft2(output[-1]))
 
-    return outputs
+    # let's re-arrange the output into a tuple of 3:
+    # the new series, the x shifts and the y shifts
+
+    newseries = np.empty_like(series)
+    for i, output in enumerate(outputs):
+        newseries[:,:,i] = output[-1]
+
+    x_shifts = np.array([o[0] for o in outputs])
+    y_shifts = np.array([o[1] for o in outputs])
+
+    return newseries, x_shifts, y_shifts
 
 def dftregistration(buf1ft,buf2ft,usfac=1, return_registered=False,
         return_error=False, zeromean=True, DEBUG=False, maxoff=None,
