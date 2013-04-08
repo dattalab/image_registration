@@ -80,13 +80,13 @@ def register_stack(stack, target=None, usfac=1, return_registered=False,
         return_error=False, zeromean=True, DEBUG=False, maxoff=None,
         nthreads=1, use_numpy_fft=False):
     """
-    Sub-pixel image registration (see dftregistration for lots of details)
+    Sub-pixel image registration of a stack of images (see dftregistration
+    for lots of details)
 
     Parameters
     ----------
-    stack : np.ndarray, 3d.  x by y by frames
+    stack : np.ndarray, 3d, x by y by frames
     target : np.ndarray.  If none, use the first image from the stack
-        The images to register. 
     usfac : int
         upsampling factor; governs accuracy of fit (1/usfac is best accuracy)
     return_registered : bool
@@ -117,13 +117,14 @@ def register_stack(stack, target=None, usfac=1, return_registered=False,
         target = stack[:,:,0]
 
     # prepare the target array
-
     if zeromean:
         target -= target.mean()
     target[np.isnan(target)] = 0
 
+    # import the fft functions
     fft2,ifft2 = fftn,ifftn = fast_ffts.get_ffts(nthreads=nthreads, use_numpy_fft=use_numpy_fft)
 
+    # let's pre-transform everything
     targetfft = fft2(target)
     stackfft = np.empty_like(stack, dtype='complex128')
     for i in range(stack.shape[2]):
@@ -137,16 +138,13 @@ def register_stack(stack, target=None, usfac=1, return_registered=False,
                                  zeromean=zeromean, DEBUG=DEBUG, maxoff=maxoff)
         outputs.appen(output)
 
-
-    # uh not that clear about this reordering of the outputs?
-
+    # uh not that clear about this reordering of the outputs, but i do it for all outputs.
     for i, output in enumerate(outputs):
         outputs[i] = [-output[1], -output[0], ] + [o for o in output[2:]]
+        if return_registered:
+            outputs[i][-1] = np.abs(np.fft.ifftshift(ifft2(output[-1])))
 
-    if return_registered:
-        output[-1] = np.abs(np.fft.ifftshift(ifft2(output[-1])))
-
-    return output
+    return outputs
 
 def dftregistration(buf1ft,buf2ft,usfac=1, return_registered=False,
         return_error=False, zeromean=True, DEBUG=False, maxoff=None,
