@@ -118,9 +118,16 @@ def register_series(series, target=None, usfac=1, return_registered=False,
 
     # prepare the target array
     if zeromean:
-        target -= target.mean()
+        target_mean = target.mean()
+        target -= target_mean
     target[np.isnan(target)] = 0
 
+    # prepare the series array
+    if zeromean:
+        stack_mean = stack.mean(axis=0).mean(axis=0)
+        stack -= stack_mean
+    stack[np.isnan(stack)] = 0
+    
     # import the fft functions
     fft2,ifft2 = fftn,ifftn = fast_ffts.get_ffts(nthreads=nthreads, use_numpy_fft=use_numpy_fft)
 
@@ -154,6 +161,9 @@ def register_series(series, target=None, usfac=1, return_registered=False,
     x_shifts = np.array([o[0] for o in outputs])
     y_shifts = np.array([o[1] for o in outputs])
 
+    if zeromean:
+        newseries += stack_mean
+        
     return newseries, x_shifts, y_shifts
 
 def dftregistration(buf1ft,buf2ft,usfac=1, return_registered=False,
