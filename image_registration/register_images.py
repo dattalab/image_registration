@@ -7,7 +7,9 @@ except ImportError:
 import warnings
 import numpy as np
 
-__all__ = ['register_images', 'register_series', 'dftregistration']
+import multiprocessing as mp
+
+__all__ = ['register_images', 'register_series', 'register_series_parallel', 'dftregistration']
 
 def register_images(im1, im2, usfac=1, return_registered=False,
         return_error=False, zeromean=True, DEBUG=False, maxoff=None,
@@ -76,8 +78,8 @@ def register_images(im1, im2, usfac=1, return_registered=False,
 
     return output
 
-def register_series(series, target=None, usfac=1, return_registered=False,
-        return_error=False, zeromean=True, DEBUG=False, maxoff=None,
+def register_series(series, target=None, usfac=1, return_registered=True,
+        return_error=False, zeromean=False, DEBUG=False, maxoff=None,
         nthreads=1, use_numpy_fft=False):
     """
     Sub-pixel image registration of a series of images (see dftregistration
@@ -117,16 +119,10 @@ def register_series(series, target=None, usfac=1, return_registered=False,
         target = series[:,:,0]
 
     # prepare the target array
-    if zeromean:
-        target_mean = target.mean()
-        target -= target_mean
     target[np.isnan(target)] = 0
 
     # prepare the series array
-    if zeromean:
-        stack_mean = stack.mean(axis=0).mean(axis=0)
-        stack -= stack_mean
-    stack[np.isnan(stack)] = 0
+    series[np.isnan(series)] = 0
     
     # import the fft functions
     fft2,ifft2 = fftn,ifftn = fast_ffts.get_ffts(nthreads=nthreads, use_numpy_fft=use_numpy_fft)
@@ -160,14 +156,93 @@ def register_series(series, target=None, usfac=1, return_registered=False,
 
     x_shifts = np.array([o[0] for o in outputs])
     y_shifts = np.array([o[1] for o in outputs])
-
-    if zeromean:
-        newseries += stack_mean
         
     return newseries, x_shifts, y_shifts
 
+def register_series_parallel(series, target=None, usfac=1, return_registered=True,
+        return_error=False, zeromean=False, DEBUG=False, maxoff=None,
+        nthreads=1, use_numpy_fft=False):
+    """
+    Sub-pixel image registration of a series of images (see dftregistration
+    for lots of details)
+
+    Parameters
+    ----------
+    series : np.ndarray, 3d, x by y by frames
+    target : np.ndarray.  If none, use the first image from the series
+    usfac : int
+        upsampling factor; governs accuracy of fit (1/usfac is best accuracy)
+    return_registered : bool
+        Return the registered image as the last parameter
+    return_error : bool
+        Does nothing at the moment, but in principle should return the "fit
+        error" (it does nothing because I don't know how to compute the "fit
+        error")
+    zeromean : bool
+        Subtract the mean from the images before cross-correlating?  If no, you
+        may get a 0,0 offset because the DC levels are strongly correlated.
+    maxoff : int
+        Maximum allowed offset to measure (setting this helps avoid spurious
+        peaks)
+    DEBUG : bool
+        Test code used during development.  Should DEFINITELY be removed.
+
+    Returns
+    -------
+    newseries, dx,dy : 3d array, 2d array, 2d array
+    """
+    if target is None:
+        target = series[:,:,0]
+    target[np.isnan(target)] = 0
+    series[np.isnan(series)] = 0
+    
+    # import the fft functions
+    fft2,ifft2 = fftn,ifftn = fast_ffts.get_ffts(nthreads=1, use_numpy_fft=use_numpy_fft)
+
+    # let's pre-transform just the target
+    targetfft = fft2(target)
+
+    list_of_target_and_frames = [(frame, targetfft, usfac, return_registered, 
+                                  return_error, zeromean, DEBUG, 
+                                  maxoff, nthreads, use_numpy_fft) for frame in list(np.rollaxis(series, 2))]
+
+    pool = mp.Pool(processes=nthreads)
+    out = pool.map(aligner, list_of_target_and_frames) # returns image, x, y
+
+    x_shifts = np.array([o[1] for o in out])
+    y_shifts = np.array([o[2] for o in out])
+
+    newseries = np.empty_like(series)
+    for i, output in enumerate(out):
+        newseries[:,:,i] = output[0]
+    
+    return newseries, x_shifts, y_shifts
+
+def aligner(target_and_frame):
+    frame = target_and_frame[0]
+    target_fft = target_and_frame[1]
+    usfac = target_and_frame[2]
+    return_registered = target_and_frame[3]
+    return_error = target_and_frame[4]
+    zeromean = target_and_frame[5]
+    DEBUG = target_and_frame[6]
+    maxoff = target_and_frame[7]
+    nthreads = target_and_frame[8]
+    use_numpy_fft = target_and_frame[9]
+
+    fft2,ifft2 = fftn,ifftn = fast_ffts.get_ffts(nthreads=1, use_numpy_fft=use_numpy_fft)
+
+    frame_fft = fft2(frame)
+
+    output = dftregistration(target_fft, frame_fft, usfac, return_registered, return_error, 
+                             zeromean, DEBUG, maxoff, nthreads, use_numpy_fft)
+
+    output[-1] = np.abs(ifft2(output[-1]))
+    return (output[-1], -output[1], -output[0])
+
+
 def dftregistration(buf1ft,buf2ft,usfac=1, return_registered=False,
-        return_error=False, zeromean=True, DEBUG=False, maxoff=None,
+        return_error=False, zeromean=False, DEBUG=False, maxoff=None,
         nthreads=1, use_numpy_fft=False):
     """
     translated from matlab:
