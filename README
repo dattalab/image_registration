@@ -1,5 +1,6 @@
-Image Registration Methods for Astronomy
-(intended for *extended emission*, not stellar images!)
+Image Registration Methods 
+
+This is a fork of keflavich's image_registration, for more general purpose usage.
 
 Documentation:
 image-registration.rtfd.org
